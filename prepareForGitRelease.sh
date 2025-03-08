@@ -18,3 +18,8 @@ mv current-folder-notes.zip release.zip
 # remove the current_release folder
 # rm -rf current-folder-notes
 
+git add -A
+git commit -m "Prepare for Git Release"
+git push origin main
+
+echo 'gh release create 1.0.4 release.zip main.js manifest.json styles.css --title "Aesthetics" --notes "Improve aesthetics"'
