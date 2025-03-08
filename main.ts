@@ -1,15 +1,29 @@
-import { App, Plugin, PluginSettingTab, Setting, MarkdownView, Notice } from 'obsidian';
+import { App, Plugin, PluginSettingTab, Setting, MarkdownView, Notice, Modal } from 'obsidian';
 
 interface EditorToClipboardSettings {
     removeMetadata: boolean;
+    showCopyButton: boolean;
+    copyButtonLocation: 'ribbon' | 'statusbar' | 'hidden';
+    showSaveButton: boolean;
+    saveButtonLocation: 'ribbon' | 'statusbar' | 'hidden';
+    defaultSaveLocation: string;
+    fileNamePrefix: string;
 }
 
 const DEFAULT_SETTINGS: EditorToClipboardSettings = {
-    removeMetadata: true
+    removeMetadata: true,
+    showCopyButton: true,
+    copyButtonLocation: 'ribbon',
+    showSaveButton: true,
+    saveButtonLocation: 'ribbon',
+    defaultSaveLocation: "", // Empty means user will be prompted
+    fileNamePrefix: "(Plain) "
 }
 
 export default class EditorToClipboardPlugin extends Plugin {
     settings: EditorToClipboardSettings;
+    saveButtonEl: HTMLElement | null = null;
+    clipboardButtonEl: HTMLElement | null = null;
 
     async onload() {
         await this.loadSettings();
@@ -30,14 +44,88 @@ export default class EditorToClipboardPlugin extends Plugin {
             ]
         });
 
-        // Add a ribbon icon (button)
-        const ribbonIconEl = this.addRibbonIcon('clipboard', 'Copy Markdown Content', () => {
-            this.OneClickClipboard();
+        // Command with a hotkey (Cmd/Ctrl+Shift+S) for saving to a file
+        this.addCommand({
+            id: 'save-active-editor-content',
+            name: 'Save active editor content to a file',
+            callback: () => {
+                this.saveToFile();
+            },
+            hotkeys: [
+                {
+                    modifiers: ["Mod", "Shift"],
+                    key: "S"
+                }
+            ]
         });
-        ribbonIconEl.addClass('editor-to-clipboard-plugin');
 
-        // Add settings tab to choose copy mode
+        // Add buttons based on settings
+        this.updateButtonLocations();
+
+        // Add settings tab
         this.addSettingTab(new EditorToClipboardSettingTab(this.app, this));
+    }
+
+    /**
+     * Updates button locations based on settings
+     */
+    updateButtonLocations() {
+        // Clear any existing buttons
+        if (this.saveButtonEl) {
+            this.saveButtonEl.remove();
+            this.saveButtonEl = null;
+        }
+        
+        if (this.clipboardButtonEl) {
+            this.clipboardButtonEl.remove();
+            this.clipboardButtonEl = null;
+        }
+        
+        // Add copy button if enabled
+        if (this.settings.showCopyButton && this.settings.copyButtonLocation !== 'hidden') {
+            if (this.settings.copyButtonLocation === 'ribbon') {
+                // Add to ribbon
+                this.clipboardButtonEl = this.addRibbonIcon('clipboard', 'Copy Markdown Content', () => {
+                    this.OneClickClipboard();
+                });
+                this.clipboardButtonEl.addClass('editor-to-clipboard-plugin');
+            } 
+            else if (this.settings.copyButtonLocation === 'statusbar') {
+                // Add to status bar
+                this.clipboardButtonEl = this.addStatusBarItem();
+                const clipboardIcon = this.clipboardButtonEl.createEl("span", { 
+                    text: "📋",
+                    attr: { 'aria-label': 'Copy Markdown Content' }
+                });
+                clipboardIcon.style.cursor = 'pointer';
+                clipboardIcon.addEventListener('click', () => {
+                    this.OneClickClipboard();
+                });
+            }
+        }
+        
+        // Add save button if enabled
+        if (this.settings.showSaveButton && this.settings.saveButtonLocation !== 'hidden') {
+            if (this.settings.saveButtonLocation === 'ribbon') {
+                // Add to ribbon
+                this.saveButtonEl = this.addRibbonIcon('save', 'Save Markdown Content to File', () => {
+                    this.saveToFile();
+                });
+                this.saveButtonEl.addClass('editor-to-clipboard-save-plugin');
+            }
+            else if (this.settings.saveButtonLocation === 'statusbar') {
+                // Add to status bar
+                this.saveButtonEl = this.addStatusBarItem();
+                const saveIcon = this.saveButtonEl.createEl("span", { 
+                    text: "💾",
+                    attr: { 'aria-label': 'Save Markdown Content to File' }
+                });
+                saveIcon.style.cursor = 'pointer';
+                saveIcon.addEventListener('click', () => {
+                    this.saveToFile();
+                });
+            }
+        }
     }
 
     /**
@@ -63,6 +151,72 @@ export default class EditorToClipboardPlugin extends Plugin {
 
         await navigator.clipboard.writeText(content);
         new Notice("Copied markdown content to clipboard!");
+    }
+
+    /**
+     * Saves the processed markdown content to a file
+     */
+    async saveToFile() {
+        const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
+        if (!activeView) {
+            new Notice("No active markdown view found.");
+            return;
+        }
+        const editor = activeView.editor;
+        let content = editor.getValue();
+
+        // Remove metadata if the setting is enabled
+        if (this.settings.removeMetadata) {
+            content = content.replace(/^---\n[\s\S]*?\n---\n/, '');
+        }
+
+        // Process block references
+        content = await this.resolveBlockReferences(content);
+
+        // Get current file name as a suggestion
+        const currentFile = activeView.file;
+        const fileName = currentFile ? currentFile.name.replace('.md', '') : 'exported-content';
+        // Apply prefix to file name
+        let suggestedName = `${this.settings.fileNamePrefix}${fileName}.md`;
+
+        // If default save location is set, use it
+        let targetPath = this.settings.defaultSaveLocation;
+        
+        // If no default path or it's empty, prompt the user
+        if (!targetPath) {
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.value = suggestedName;
+            
+            // Create a promise to handle the modal response
+            const savePathPromise = new Promise<string>((resolve) => {
+                const modal = new SaveFileModal(this.app, input, (result) => {
+                    resolve(result);
+                });
+                modal.open();
+            });
+            
+            targetPath = await savePathPromise;
+            
+            // If user cancelled, abort
+            if (!targetPath) {
+                return;
+            }
+            
+            // Ensure .md extension
+            if (!targetPath.endsWith('.md')) {
+                targetPath += '.md';
+            }
+        }
+        
+        try {
+            // Create or overwrite the file
+            await this.app.vault.create(targetPath, content);
+            new Notice(`Content saved to ${targetPath}`);
+        } catch (error) {
+            console.error('Failed to save file:', error);
+            new Notice('Failed to save file. Check console for details.');
+        }
     }
 
     async resolveBlockReferences(content: string): Promise<string> {
@@ -254,6 +408,67 @@ export default class EditorToClipboardPlugin extends Plugin {
     }
 }
 
+// Custom modal for getting save file path
+class SaveFileModal extends Modal {
+    result: string;
+    inputEl: HTMLInputElement;
+    onSubmit: (result: string) => void;
+
+    constructor(app: App, inputEl: HTMLInputElement, onSubmit: (result: string) => void) {
+        super(app);
+        this.inputEl = inputEl;
+        this.onSubmit = onSubmit;
+    }
+
+    onOpen() {
+        const { contentEl } = this;
+        
+        contentEl.createEl('h2', { text: 'Save to file' });
+        
+        contentEl.createEl('p', { 
+            text: 'Enter the file path where you want to save the content:'
+        });
+        
+        // Add the input element
+        contentEl.appendChild(this.inputEl);
+        this.inputEl.style.width = '100%';
+        this.inputEl.focus();
+        
+        // Add action buttons
+        const buttonContainer = contentEl.createEl('div');
+        buttonContainer.style.marginTop = '1rem';
+        buttonContainer.style.display = 'flex';
+        buttonContainer.style.justifyContent = 'flex-end';
+        
+        const saveButton = buttonContainer.createEl('button', { text: 'Save' });
+        saveButton.addEventListener('click', () => {
+            this.close();
+            this.onSubmit(this.inputEl.value);
+        });
+        
+        const cancelButton = buttonContainer.createEl('button', { text: 'Cancel' });
+        cancelButton.style.marginRight = '0.5rem';
+        cancelButton.addEventListener('click', () => {
+            this.close();
+            this.onSubmit('');
+        });
+        
+        // Handle Enter key
+        this.inputEl.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                this.close();
+                this.onSubmit(this.inputEl.value);
+            }
+        });
+    }
+
+    onClose() {
+        const { contentEl } = this;
+        contentEl.empty();
+    }
+}
+
 class EditorToClipboardSettingTab extends PluginSettingTab {
     plugin: EditorToClipboardPlugin;
 
@@ -268,6 +483,9 @@ class EditorToClipboardSettingTab extends PluginSettingTab {
 
         containerEl.createEl('h2', { text: 'Settings for Editor to Clipboard Plugin' });
 
+        // Content settings
+        containerEl.createEl('h3', { text: 'Content Settings' });
+
         new Setting(containerEl)
             .setName('Remove Metadata')
             .setDesc('Remove metadata information (marked by three dashes at the top of the file) when copying markdown content. This includes any front matter such as dates, tags, etc.')
@@ -275,6 +493,84 @@ class EditorToClipboardSettingTab extends PluginSettingTab {
                 .setValue(this.plugin.settings.removeMetadata)
                 .onChange(async (value) => {
                     this.plugin.settings.removeMetadata = value;
+                    await this.plugin.saveSettings();
+                }));
+
+        // Copy button settings
+        containerEl.createEl('h3', { text: 'Copy Button Settings' });
+        
+        new Setting(containerEl)
+            .setName('Show Copy Button')
+            .setDesc('Enable or disable the button for copying content to clipboard.')
+            .addToggle(toggle => toggle
+                .setValue(this.plugin.settings.showCopyButton)
+                .onChange(async (value) => {
+                    this.plugin.settings.showCopyButton = value;
+                    await this.plugin.saveSettings();
+                    this.plugin.updateButtonLocations();
+                }));
+
+        new Setting(containerEl)
+            .setName('Copy Button Location')
+            .setDesc('Choose where to display the copy button.')
+            .addDropdown(dropdown => dropdown
+                .addOption('ribbon', 'Left Sidebar (Ribbon)')
+                .addOption('statusbar', 'Top Bar')
+                .addOption('hidden', 'Hidden')
+                .setValue(this.plugin.settings.copyButtonLocation)
+                .onChange(async (value) => {
+                    this.plugin.settings.copyButtonLocation = value as 'ribbon' | 'statusbar' | 'hidden';
+                    await this.plugin.saveSettings();
+                    this.plugin.updateButtonLocations();
+                }));
+
+        // Save button settings
+        containerEl.createEl('h3', { text: 'Save Button Settings' });
+        
+        new Setting(containerEl)
+            .setName('Show Save Button')
+            .setDesc('Enable or disable the button for saving content to a file.')
+            .addToggle(toggle => toggle
+                .setValue(this.plugin.settings.showSaveButton)
+                .onChange(async (value) => {
+                    this.plugin.settings.showSaveButton = value;
+                    await this.plugin.saveSettings();
+                    this.plugin.updateButtonLocations();
+                }));
+
+        new Setting(containerEl)
+            .setName('Save Button Location')
+            .setDesc('Choose where to display the save button.')
+            .addDropdown(dropdown => dropdown
+                .addOption('ribbon', 'Left Sidebar (Ribbon)')
+                .addOption('statusbar', 'Top Bar')
+                .addOption('hidden', 'Hidden')
+                .setValue(this.plugin.settings.saveButtonLocation)
+                .onChange(async (value) => {
+                    this.plugin.settings.saveButtonLocation = value as 'ribbon' | 'statusbar' | 'hidden';
+                    await this.plugin.saveSettings();
+                    this.plugin.updateButtonLocations();
+                }));
+
+        new Setting(containerEl)
+            .setName('File Name Prefix')
+            .setDesc('Prefix to add to exported file names (e.g., "(Plain) ")')
+            .addText(text => text
+                .setPlaceholder('(Plain) ')
+                .setValue(this.plugin.settings.fileNamePrefix)
+                .onChange(async (value) => {
+                    this.plugin.settings.fileNamePrefix = value;
+                    await this.plugin.saveSettings();
+                }));
+
+        new Setting(containerEl)
+            .setName('Default Save Location')
+            .setDesc('Optional: Set a default save location for files. Leave empty to be prompted each time. Example: "exports/content.md"')
+            .addText(text => text
+                .setPlaceholder('exports/content.md')
+                .setValue(this.plugin.settings.defaultSaveLocation)
+                .onChange(async (value) => {
+                    this.plugin.settings.defaultSaveLocation = value;
                     await this.plugin.saveSettings();
                 }));
     }
