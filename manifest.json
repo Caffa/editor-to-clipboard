@@ -1,11 +1,11 @@
 {
-	"id": "sample-plugin",
-	"name": "Sample Plugin",
+	"id": "editor-to-clipboard",
+	"name": "Editor to Clipboard",
 	"version": "1.0.0",
-	"minAppVersion": "0.15.0",
-	"description": "Demonstrates some of the capabilities of the Obsidian API.",
-	"author": "Obsidian",
-	"authorUrl": "https://obsidian.md",
-	"fundingUrl": "https://obsidian.md/pricing",
+	"minAppVersion": "1.7.7",
+	"description": "In one click, it copies the active file to the clipboard (as markdown), including block references. Useful for sharing notes with others or to LLM.",
+	"author": "Pamela Wang",
+	"authorUrl": "https://github.com/Caffa",
+	"fundingUrl": "https://ko-fi.com/pamelawang_mwahacookie",
 	"isDesktopOnly": false
 }
