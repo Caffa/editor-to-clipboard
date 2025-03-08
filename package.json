@@ -1,6 +1,6 @@
 {
   "name": "editor-to-clipboard",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "In one click, it copies the active file to the clipboard (as markdown), including block references. Useful for sharing notes with others or to LLM.",
   "main": "main.js",
   "scripts": {
