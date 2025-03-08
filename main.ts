@@ -39,7 +39,7 @@ export default class EditorToClipboardPlugin extends Plugin {
         // Command without default hotkey - users can set their own
         this.addCommand({
             id: 'copy-active-editor-content',
-            name: 'Copy active editor content to clipboard',
+            name: 'Copy to clipboard', // Simplified command name
             callback: () => {
                 this.OneClickClipboard();
             }
@@ -48,46 +48,48 @@ export default class EditorToClipboardPlugin extends Plugin {
         // Command without default hotkey - users can set their own
         this.addCommand({
             id: 'save-active-editor-content',
-            name: 'Save active editor content to a file',
+            name: 'Save to file', // Simplified command name
             callback: () => {
                 this.saveToFile();
             }
         });
 
-        // Add buttons based on settings
-        this.updateButtonLocations();
-
         // Add settings tab
         this.addSettingTab(new EditorToClipboardSettingTab(this.app, this));
 
-        // Register event for layout changes to handle settings visibility
-        this.registerEvent(
-            this.app.workspace.on('layout-change', () => {
-                if (this.isSettingsOpen()) {
-                    this.hideFloatingButtons();
-                } else {
-                    // Only show buttons if settings is closed
-                    this.updateButtonLocations();
-                }
-            })
-        );
+        // Move UI setup to onLayoutReady
+        this.app.workspace.onLayoutReady(() => {
+            // Add buttons based on settings
+            this.updateButtonLocations();
 
-        // Register other events
-        this.registerEvent(
-            this.app.workspace.on('resize', () => {
-                if (!this.isSettingsOpen()) {
-                    this.updateAllFloatingButtonPositions();
-                }
-            })
-        );
+            // Register event for layout changes to handle settings visibility
+            this.registerEvent(
+                this.app.workspace.on('layout-change', () => {
+                    if (this.isSettingsOpen()) {
+                        this.hideFloatingButtons();
+                    } else {
+                        this.updateButtonLocations();
+                    }
+                })
+            );
 
-        this.registerEvent(
-            this.app.workspace.on('active-leaf-change', () => {
-                if (!this.isSettingsOpen()) {
-                    this.updateAllFloatingButtonPositions();
-                }
-            })
-        );
+            // Register other events
+            this.registerEvent(
+                this.app.workspace.on('resize', () => {
+                    if (!this.isSettingsOpen()) {
+                        this.updateAllFloatingButtonPositions();
+                    }
+                })
+            );
+
+            this.registerEvent(
+                this.app.workspace.on('active-leaf-change', () => {
+                    if (!this.isSettingsOpen()) {
+                        this.updateAllFloatingButtonPositions();
+                    }
+                })
+            );
+        });
     }
 
     /**
@@ -683,19 +685,25 @@ export default class EditorToClipboardPlugin extends Plugin {
         }
     }
 
+    // Helper method to get file by path more efficiently
+    private getFileByPath(path: string): TFile | null {
+        return this.app.vault.getAbstractFileByPath(path) as TFile || null;
+    }
+
     async resolveBlockReferences(content: string): Promise<string> {
         const embedPattern = /\!\[\[(.*?)(?:#([^\]]+))?\]\]/g;
         let matches = Array.from(content.matchAll(embedPattern));
         
         for (let i = matches.length - 1; i >= 0; i--) {
             const match = matches[i];
-            if (!match || !match.index) continue;  // Skip if match or index is undefined
+            if (!match || !match.index) continue;
             
             const fullMatch = match[0];
             const filePath = match[1].trim();
             const hashPart = match[2] ? match[2].trim() : "";
             
-            const targetFile = this.app.metadataCache.getFirstLinkpathDest(filePath, "");
+            // Use more efficient file lookup
+            const targetFile = this.getFileByPath(filePath);
             if (!targetFile) {
                 content = content.slice(0, match.index) + 
                     `[File not found: ${filePath}]` + 
