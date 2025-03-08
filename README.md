@@ -4,7 +4,7 @@ Hey there! Welcome to the **Editor to Clipboard Plugin**. This Obsidian plugin i
 
 ## What Is It?
 
-Think of it as a handy tool that lets you copy or save your markdown content with minimal effort. The Editor to Clipboard Plugin adds some convenient buttons and commands to your Obsidian workspace to help you get things done quickly.
+Think of it as a handy tool that lets you copy or save your obsidian styled markdown content with minimal effort. The key value here is how it resolves embedded text for you. The Editor to Clipboard Plugin adds some convenient buttons and commands to your Obsidian workspace to help you get things done quickly.
 
 ## Features
 
