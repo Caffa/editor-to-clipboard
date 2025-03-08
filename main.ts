@@ -36,34 +36,22 @@ export default class EditorToClipboardPlugin extends Plugin {
         await this.loadSettings();
         console.log('Loading Editor to Clipboard Plugin');
 
-        // Command with a hotkey (Cmd/Ctrl+Shift+C)
+        // Command without default hotkey - users can set their own
         this.addCommand({
             id: 'copy-active-editor-content',
             name: 'Copy active editor content to clipboard',
             callback: () => {
                 this.OneClickClipboard();
-            },
-            hotkeys: [
-                {
-                    modifiers: ["Mod", "Shift"],
-                    key: "C"
-                }
-            ]
+            }
         });
 
-        // Command with a hotkey (Cmd/Ctrl+Shift+S) for saving to a file
+        // Command without default hotkey - users can set their own
         this.addCommand({
             id: 'save-active-editor-content',
             name: 'Save active editor content to a file',
             callback: () => {
                 this.saveToFile();
-            },
-            hotkeys: [
-                {
-                    modifiers: ["Mod", "Shift"],
-                    key: "S"
-                }
-            ]
+            }
         });
 
         // Add buttons based on settings
