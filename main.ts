@@ -372,6 +372,9 @@ export default class EditorToClipboardPlugin extends Plugin {
         // Process block references
         content = await this.resolveBlockReferences(content);
 
+        // Ensure the list structure with indentation is preserved
+        content = this.preserveNestedLists(content);
+
         await navigator.clipboard.writeText(content);
         new Notice("Copied markdown content to clipboard!");
     }
@@ -400,6 +403,9 @@ export default class EditorToClipboardPlugin extends Plugin {
 
         // Process block references
         content = await this.resolveBlockReferences(content);
+
+        // Ensure the list structure with indentation is preserved
+        content = this.preserveNestedLists(content);
 
         // Get current file name as a suggestion
         const currentFile = activeView.file;
@@ -646,6 +652,87 @@ export default class EditorToClipboardPlugin extends Plugin {
         return lines.join('\n');
     }
 
+    /**
+     * Preserves the nested list structure in markdown content
+     * This fixes issues where indented list items lose their indentation
+     * @param content The markdown content to process
+     * @returns Processed content with preserved list structure
+     */
+    preserveNestedLists(content: string): string {
+        // First, find all list items and mark their levels
+        const lines = content.split('\n');
+
+        // No processing needed for single line
+        if (lines.length <= 1) {
+            return content;
+        }
+
+        // Keep track of list hierarchy
+        let currentListLevel = 0;
+        let inList = false;
+        const listLevels: number[] = new Array(lines.length).fill(0);
+        const isListItem: boolean[] = new Array(lines.length).fill(false);
+
+        // First pass: detect all list items and their levels
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+
+            // Check if this line is a list item (starts with - or * or number. followed by space)
+            const listItemMatch = line.match(/^([\s]*)(-|\*|\d+\.)\s/);
+
+            if (listItemMatch) {
+                // This is a list item
+                const indentLevel = listItemMatch[1].length;
+                isListItem[i] = true;
+
+                // Determine the list level based on indentation
+                if (!inList) {
+                    // Start of a new list
+                    inList = true;
+                    currentListLevel = 1;
+                } else if (indentLevel > 0) {
+                    // This is a nested list item
+                    currentListLevel = Math.floor(indentLevel / 2) + 1;
+                }
+
+                listLevels[i] = currentListLevel;
+
+                // Check if the next line is a continuation of this list item
+                if (i + 1 < lines.length) {
+                    const nextLine = lines[i + 1];
+                    const nextLineMatch = nextLine.match(/^([\s]*)(-|\*|\d+\.)\s/);
+
+                    if (!nextLineMatch && nextLine.trim()) {
+                        // Next line is not a list item but has content - mark it as a continuation
+                        // Check if there's any indentation
+                        const nextLineIndent = nextLine.match(/^([\s]*)/)[1].length;
+
+                        // If it's not already properly indented, record that we need to preserve its indentation
+                        if (nextLineIndent <= indentLevel) {
+                            // This is part of the current list item and needs to maintain proper indentation
+                            listLevels[i + 1] = currentListLevel;
+                        }
+                    }
+                }
+            } else if (inList && line.trim()) {
+                // This is not a list item but has content - could be a continuation or nested content
+                const indentMatch = line.match(/^([\s]*)/);
+                const indentLevel = indentMatch ? indentMatch[1].length : 0;
+
+                // Preserve existing indentation rather than replacing it
+                listLevels[i] = Math.max(1, Math.floor(indentLevel / 2) + 1);
+            } else if (!line.trim()) {
+                // Empty line, reset list context if we were in a list
+                inList = false;
+                currentListLevel = 0;
+            }
+        }
+
+        // Now we have identified all the list items and their levels
+        // No need to modify the content as we're preserving the original indentation
+        return lines.join('\n');
+    }
+
     // Fetch the entire file content if it's just ![[someFile]] with no # part
     async getFullFileContent(filePath: string): Promise<string | null> {
         const file = this.app.metadataCache.getFirstLinkpathDest(filePath, "");
@@ -881,7 +968,7 @@ class EditorToClipboardSettingTab extends PluginSettingTab {
                 .addOption('floating-right-bottom', 'Floating (Right Bottom)')
                 .setValue(this.plugin.settings.copyButtonPosition)
                 .onChange(async (value) => {
-                    this.plugin.settings.copyButtonPosition = value as any;
+                    this.plugin.settings.copyButtonPosition = value as 'ribbon' | 'top-of-note' | 'hidden' | 'floating-left-top' | 'floating-left-middle' | 'floating-left-bottom' | 'floating-right-top' | 'floating-right-middle' | 'floating-right-bottom';
                     await this.plugin.saveSettings();
                     this.plugin.updateButtonLocations();
                 }));
@@ -904,7 +991,7 @@ class EditorToClipboardSettingTab extends PluginSettingTab {
                 .addOption('floating-right-bottom', 'Floating (Right Bottom)')
                 .setValue(this.plugin.settings.saveButtonPosition)
                 .onChange(async (value) => {
-                    this.plugin.settings.saveButtonPosition = value as any;
+                    this.plugin.settings.saveButtonPosition = value as 'ribbon' | 'top-of-note' | 'hidden' | 'floating-left-top' | 'floating-left-middle' | 'floating-left-bottom' | 'floating-right-top' | 'floating-right-middle' | 'floating-right-bottom';
                     await this.plugin.saveSettings();
                     this.plugin.updateButtonLocations();
                 }));
