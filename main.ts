@@ -628,7 +628,8 @@ export default class EditorToClipboardPlugin extends Plugin {
         // Also remove any other block IDs that might be present
         content = content.replace(/\s*\^[a-zA-Z0-9]+\s*$/g, '');
 
-        return content.trim();
+        // Trim only trailing whitespace to preserve indentation
+        return content.replace(/\s+$/, '');
     }
 
     /**
