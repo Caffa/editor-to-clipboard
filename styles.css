@@ -11,30 +11,21 @@ If your plugin does not need CSS, delete this file.
 .editor-to-clipboard-button {
     width: 36px;
     height: 36px;
+    border-radius: 50%;
+    background-color: var(--interactive-accent);
+    color: var(--text-on-accent);
     display: flex;
     align-items: center;
     justify-content: center;
     cursor: pointer;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+    transition: all 0.2s ease;
     margin: 5px;
-    padding: 8px;
-    border-radius: 6px;
-    background-color: var(--background-primary);
-    border: 1px solid var(--background-modifier-border);
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-    transition: all 80ms ease-in-out; /* Even faster */
-    will-change: transform, box-shadow; /* Optimize performance */
 }
 
 .editor-to-clipboard-button:hover {
-    background-color: var(--background-primary-alt);
-    transform: translateY(-1px);
-    box-shadow: 0 3px 6px rgba(0, 0, 0, 0.15);
-}
-
-.editor-to-clipboard-button.is-active {
-    transform: scale(0.92);
-    background-color: var(--background-modifier-success);
-    transition: all 40ms ease-out; /* Super fast click feedback */
+    transform: scale(1.1);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
 }
 
 /* Ribbon button styles - remove circular styling */
@@ -61,21 +52,41 @@ If your plugin does not need CSS, delete this file.
 /* Floating container styles - updated for individual positioning */
 .editor-to-clipboard-floating-container {
     position: fixed;
-    z-index: var(--layer-popover); /* Use Obsidian's built-in layer system */
+    z-index: 1000;
     display: flex;
     flex-direction: column;
     gap: 10px;
     padding: 5px;
-    pointer-events: auto !important; /* Ensure buttons remain clickable */
-    transition: all 80ms cubic-bezier(0.4, 0, 0.2, 1);
-    opacity: 0.8;
-    animation: buttonAppear 100ms cubic-bezier(0.4, 0, 0.2, 1);
-    will-change: transform, opacity; /* Optimize performance */
+    pointer-events: auto; /* Ensure clickability */
 }
 
-.editor-to-clipboard-floating-container:hover {
-    opacity: 1;
-    transform: scale(1.02); /* Subtler scale effect */
+/* Positioning classes for floating containers */
+.editor-to-clipboard-left {
+    left: 20px;
+    right: auto;
+}
+
+.editor-to-clipboard-right {
+    right: 20px;
+    left: auto;
+}
+
+.editor-to-clipboard-top {
+    top: 20px;
+    bottom: auto;
+    transform: none;
+}
+
+.editor-to-clipboard-middle {
+    top: 50%;
+    bottom: auto;
+    transform: translateY(-50%);
+}
+
+.editor-to-clipboard-bottom {
+    bottom: 20px;
+    top: auto;
+    transform: none;
 }
 
 /* Top of note container styles */
@@ -88,32 +99,18 @@ If your plugin does not need CSS, delete this file.
     justify-content: flex-end;
 }
 
-/* For groups of buttons */
-.editor-to-clipboard-group-container {
-    background: transparent;
-    padding: 4px;
-    border-radius: 8px;
-    backdrop-filter: blur(5px);
-    transition: all 80ms cubic-bezier(0.4, 0, 0.2, 1);
+/* Modal styles */
+.editor-to-clipboard-modal-input {
+    width: 100%;
 }
 
-.editor-to-clipboard-group-container:hover {
-    backdrop-filter: blur(10px);
+.editor-to-clipboard-modal-button-container {
+    margin-top: 1rem;
+    display: flex;
+    justify-content: flex-end;
 }
 
-/* Animate button appearance */
-@keyframes buttonAppear {
-    from {
-        opacity: 0;
-        transform: scale(0.98);
-    }
-    to {
-        opacity: 0.8;
-        transform: scale(1);
-    }
+.editor-to-clipboard-modal-cancel-button {
+    margin-right: 0.5rem;
 }
 
-/* Ensure buttons are visible but below settings */
-.modal-container {
-    z-index: var(--layer-modal); /* Use Obsidian's built-in layer system */
-}

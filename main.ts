@@ -1,11 +1,11 @@
-import { App, Plugin, PluginSettingTab, Setting, MarkdownView, Notice, Modal, TFile, SettingTab } from 'obsidian';
+import { App, Plugin, PluginSettingTab, Setting, MarkdownView, Notice, Modal, TFile } from 'obsidian';
 
 interface EditorToClipboardSettings {
     removeMetadata: boolean;
     removeBlockIds: boolean;
     // Combined position settings
-    copyButtonPosition: 'ribbon' | 'hidden' | 'floating-left-top' | 'floating-left-middle' | 'floating-left-bottom' | 'floating-right-top' | 'floating-right-middle' | 'floating-right-bottom';
-    saveButtonPosition: 'ribbon' | 'hidden' | 'floating-left-top' | 'floating-left-middle' | 'floating-left-bottom' | 'floating-right-top' | 'floating-right-middle' | 'floating-right-bottom';
+    copyButtonPosition: 'ribbon' | 'top-of-note' | 'hidden' | 'floating-left-top' | 'floating-left-middle' | 'floating-left-bottom' | 'floating-right-top' | 'floating-right-middle' | 'floating-right-bottom';
+    saveButtonPosition: 'ribbon' | 'top-of-note' | 'hidden' | 'floating-left-top' | 'floating-left-middle' | 'floating-left-bottom' | 'floating-right-top' | 'floating-right-middle' | 'floating-right-bottom';
     defaultSaveLocation: string;
     fileNamePrefix: string;
     openNewFile: boolean; // New setting to control auto-opening files
@@ -30,155 +30,116 @@ export default class EditorToClipboardPlugin extends Plugin {
     private leafChangeEvent: any = null; // Track the event reference
     floatingCopyContainer: HTMLElement | null = null;
     floatingSaveContainer: HTMLElement | null = null;
-    private positionUpdateTimeout: NodeJS.Timeout | null = null;
 
     async onload() {
         await this.loadSettings();
         console.log('Loading Editor to Clipboard Plugin');
 
-        // Command without default hotkey - users can set their own
+        // Command with a hotkey (Cmd/Ctrl+Shift+C)
         this.addCommand({
             id: 'copy-active-editor-content',
-            name: 'Copy to clipboard', // Simplified command name
+            name: 'Copy active editor content to clipboard',
             callback: () => {
                 this.OneClickClipboard();
-            }
+            },
+            hotkeys: [
+                {
+                    modifiers: ["Mod", "Shift"],
+                    key: "C"
+                }
+            ]
         });
 
-        // Command without default hotkey - users can set their own
+        // Command with a hotkey (Cmd/Ctrl+Shift+S) for saving to a file
         this.addCommand({
             id: 'save-active-editor-content',
-            name: 'Save to file', // Simplified command name
+            name: 'Save active editor content to a file',
             callback: () => {
                 this.saveToFile();
-            }
+            },
+            hotkeys: [
+                {
+                    modifiers: ["Mod", "Shift"],
+                    key: "S"
+                }
+            ]
         });
+
+        // Add buttons based on settings
+        this.updateButtonLocations();
 
         // Add settings tab
         this.addSettingTab(new EditorToClipboardSettingTab(this.app, this));
-
-        // Move UI setup to onLayoutReady
-        this.app.workspace.onLayoutReady(() => {
-            // Add buttons based on settings
-            this.updateButtonLocations();
-
-            // Register event for layout changes to handle settings visibility
-            this.registerEvent(
-                this.app.workspace.on('layout-change', () => {
-                    if (this.isSettingsOpen()) {
-                        this.hideFloatingButtons();
-                    } else {
-                        this.updateButtonLocations();
-                    }
-                })
-            );
-
-            // Register other events
-            this.registerEvent(
-                this.app.workspace.on('resize', () => {
-                    if (!this.isSettingsOpen()) {
-                        this.updateAllFloatingButtonPositions();
-                    }
-                })
-            );
-
-            this.registerEvent(
-                this.app.workspace.on('active-leaf-change', () => {
-                    if (!this.isSettingsOpen()) {
-                        this.updateAllFloatingButtonPositions();
-                    }
-                })
-            );
-        });
     }
 
     /**
-     * Check if settings tab is currently open
+     * Helper method to get file by path more efficiently
      */
-    isSettingsOpen(): boolean {
-        // Check all leaves for settings views
-        const allLeaves = this.app.workspace.getLeavesOfType('markdown')
-            .concat(this.app.workspace.getLeavesOfType('empty'));
-            
-        for (const leaf of allLeaves) {
-            const viewType = leaf.view?.getViewType();
-            if (viewType === 'setting') {
-                return true;
-            }
+    private getFileByPath(path: string): TFile | null {
+        const abstractFile = this.app.vault.getAbstractFileByPath(path);
+        if (abstractFile instanceof TFile) {
+            return abstractFile;
         }
-        return false;
+        return null;
     }
 
     /**
      * Updates button locations based on settings
      */
     updateButtonLocations() {
-        // Clean up existing buttons first
-        this.hideFloatingButtons();
-        if (this.floatingCopyContainer) {
-            this.floatingCopyContainer.remove();
-            this.floatingCopyContainer = null;
+        // Clear any existing buttons by reference
+        if (this.saveButtonEl) {
+            this.saveButtonEl.remove();
+            this.saveButtonEl = null;
         }
-        if (this.floatingSaveContainer) {
-            this.floatingSaveContainer.remove();
-            this.floatingSaveContainer = null;
+
+        if (this.clipboardButtonEl) {
+            this.clipboardButtonEl.remove();
+            this.clipboardButtonEl = null;
         }
+
         if (this.floatingButtonsContainer) {
             this.floatingButtonsContainer.remove();
             this.floatingButtonsContainer = null;
         }
-        
-        // Additional cleanup
-        document.querySelectorAll('.editor-to-clipboard-floating-container').forEach(el => el.remove());
-        
-        // Don't create new buttons if settings is open
-        if (this.isSettingsOpen()) {
-            return;
+
+        if (this.topOfNoteButtonsContainer) {
+            this.topOfNoteButtonsContainer.remove();
+            this.topOfNoteButtonsContainer = null;
         }
-        
+
+        // Additional cleanup - find and remove any other instances of our buttons
+        document.querySelectorAll('.editor-to-clipboard-floating-container').forEach(el => el.remove());
+        document.querySelectorAll('.editor-to-clipboard-top-note-container').forEach(el => el.remove());
+
+        // Unregister previous leaf change event if exists
+        if (this.leafChangeEvent) {
+            this.app.workspace.offref(this.leafChangeEvent);
+            this.leafChangeEvent = null;
+        }
+
         // Check if we need to create floating buttons
-        if (this.settings.copyButtonPosition.startsWith('floating-') || 
+        if (this.settings.copyButtonPosition.startsWith('floating-') ||
             this.settings.saveButtonPosition.startsWith('floating-')) {
-            
-            // Check if both buttons are in the same position
-            if (this.settings.copyButtonPosition === this.settings.saveButtonPosition && 
-                this.settings.copyButtonPosition.startsWith('floating-')) {
-                this.createFloatingButtonGroup(this.settings.copyButtonPosition);
-            } else {
-                if (this.settings.copyButtonPosition.startsWith('floating-')) {
-                    this.createFloatingButton('copy', this.settings.copyButtonPosition);
-                }
-                if (this.settings.saveButtonPosition.startsWith('floating-')) {
-                    this.createFloatingButton('save', this.settings.saveButtonPosition);
-                }
+
+            // Create floating copy button if needed
+            if (this.settings.copyButtonPosition.startsWith('floating-')) {
+                this.createFloatingButton('copy', this.settings.copyButtonPosition);
+            }
+
+            // Create floating save button if needed
+            if (this.settings.saveButtonPosition.startsWith('floating-')) {
+                this.createFloatingButton('save', this.settings.saveButtonPosition);
             }
         }
-        
+
+        // Check if we need a top-of-note container
+        if (this.settings.copyButtonPosition === 'top-of-note' ||
+            this.settings.saveButtonPosition === 'top-of-note') {
+            this.createTopOfNoteContainer();
+        }
+
         this.addButtonsToContainers();
-    }
-
-    /**
-     * Hides floating buttons when settings screen is open
-     */
-    hideFloatingButtons() {
-        if (this.floatingCopyContainer) {
-            this.floatingCopyContainer.style.display = 'none';
-        }
-        if (this.floatingSaveContainer) {
-            this.floatingSaveContainer.style.display = 'none';
-        }
-    }
-
-    /**
-     * Shows floating buttons when settings screen is closed
-     */
-    showFloatingButtons() {
-        if (this.floatingCopyContainer) {
-            this.floatingCopyContainer.style.display = 'flex';
-        }
-        if (this.floatingSaveContainer) {
-            this.floatingSaveContainer.style.display = 'flex';
-        }
     }
 
     /**
@@ -187,21 +148,19 @@ export default class EditorToClipboardPlugin extends Plugin {
     createTopOfNoteContainer() {
         const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
         if (!activeView) return;
-        
-        // Find the header element instead of using contentEl
-        const headerEl = activeView.containerEl.querySelector('.view-header');
-        if (!headerEl) return;
-        
-        // Create container for buttons
-        this.topOfNoteButtonsContainer = headerEl.createEl('div', {
+
+        const contentContainer = activeView.contentEl;
+        this.topOfNoteButtonsContainer = contentContainer.createEl('div', {
             cls: 'editor-to-clipboard-top-note-container'
         });
-        
-        // Add styles for proper positioning in header
-        this.topOfNoteButtonsContainer.style.display = 'flex';
-        this.topOfNoteButtonsContainer.style.alignItems = 'center';
-        this.topOfNoteButtonsContainer.style.marginLeft = 'auto'; // Push to right side of header
-        
+
+        // Insert at the beginning of the content
+        if (contentContainer.firstChild) {
+            contentContainer.insertBefore(this.topOfNoteButtonsContainer, contentContainer.firstChild);
+        } else {
+            contentContainer.appendChild(this.topOfNoteButtonsContainer);
+        }
+
         // Register event handler to add buttons to new active views
         this.leafChangeEvent = this.registerEvent(
             this.app.workspace.on('active-leaf-change', () => {
@@ -210,27 +169,33 @@ export default class EditorToClipboardPlugin extends Plugin {
                     this.topOfNoteButtonsContainer.remove();
                     this.topOfNoteButtonsContainer = null;
                 }
-                
+
                 // Also clean up any other instances that might exist
                 document.querySelectorAll('.editor-to-clipboard-top-note-container').forEach(el => el.remove());
-                
+
                 // Create new container in the active view if it's a markdown view
                 const newActiveView = this.app.workspace.getActiveViewOfType(MarkdownView);
-                if (newActiveView) {
-                    const headerEl = newActiveView.containerEl.querySelector('.view-header');
-                    if (!headerEl) return;
-                    this.topOfNoteButtonsContainer = headerEl.createEl('div', {
+                if (newActiveView && (this.settings.copyButtonPosition === 'top-of-note' ||
+                    this.settings.saveButtonPosition === 'top-of-note')) {
+                    const contentContainer = newActiveView.contentEl;
+                    this.topOfNoteButtonsContainer = contentContainer.createEl('div', {
                         cls: 'editor-to-clipboard-top-note-container'
                     });
-                    this.topOfNoteButtonsContainer.style.display = 'flex';
-                    this.topOfNoteButtonsContainer.style.alignItems = 'center';
-                    this.topOfNoteButtonsContainer.style.marginLeft = 'auto';
+
+                    // Insert at the beginning of the content
+                    if (contentContainer.firstChild) {
+                        contentContainer.insertBefore(this.topOfNoteButtonsContainer, contentContainer.firstChild);
+                    } else {
+                        contentContainer.appendChild(this.topOfNoteButtonsContainer);
+                    }
+
+                    // Add buttons to the new container
                     this.addButtonsToContainers();
                 }
             })
         );
     }
-    
+
     /**
      * Creates a floating button container with the appropriate position
      */
@@ -239,229 +204,28 @@ export default class EditorToClipboardPlugin extends Plugin {
         const container = document.body.createEl('div', {
             cls: `editor-to-clipboard-floating-container editor-to-clipboard-${type}-container`
         });
-        
+
         // Extract position parameters from the setting
         // Format is floating-[left/right]-[top/middle/bottom]
         const [_, horizontal, vertical] = position.split('-');
-        
-        // Get the workspace leaf to position relative to the editor area
-        const workspaceLeaf = document.querySelector('.workspace-leaf.mod-active .view-content');
-        
-        // Apply horizontal positioning - relative to editor content
-        if (workspaceLeaf) {
-            const workspaceRect = workspaceLeaf.getBoundingClientRect();
-            
-            if (horizontal === 'left') {
-                const leftOffset = Math.max(workspaceRect.left + 20, 60);
-                container.style.left = leftOffset + 'px';
-                container.style.right = 'auto';
-            } else {
-                const rightOffset = Math.max(document.body.clientWidth - workspaceRect.right + 20, 60);
-                container.style.right = rightOffset + 'px';
-                container.style.left = 'auto';
-            }
-            
-            // Apply vertical positioning
-            switch (vertical) {
-                case 'top':
-                    container.style.top = (workspaceRect.top + 80) + 'px'; // Adjusted to match group positioning
-                    container.style.bottom = 'auto';
-                    container.style.transform = 'none';
-                    break;
-                case 'middle':
-                    container.style.top = (workspaceRect.top + workspaceRect.height / 2) + 'px';
-                    container.style.bottom = 'auto';
-                    container.style.transform = 'translateY(-50%)';
-                    break;
-                case 'bottom':
-                    container.style.bottom = (document.body.clientHeight - workspaceRect.bottom + 20) + 'px';
-                    container.style.top = 'auto';
-                    container.style.transform = 'none';
-                    break;
-            }
-        } else {
-            // Fallback to original positioning if workspace leaf not found
-            if (horizontal === 'left') {
-                container.style.left = '60px';
-                container.style.right = 'auto';
-            } else {
-                container.style.right = '60px';
-                container.style.left = 'auto';
-            }
-            
-            switch (vertical) {
-                case 'top':
-                    container.style.top = '80px';
-                    container.style.bottom = 'auto';
-                    container.style.transform = 'none';
-                    break;
-                case 'middle':
-                    container.style.top = '50%';
-                    container.style.bottom = 'auto';
-                    container.style.transform = 'translateY(-50%)';
-                    break;
-                case 'bottom':
-                    container.style.bottom = '80px';
-                    container.style.top = 'auto';
-                    container.style.transform = 'none';
-                    break;
-            }
-        }
-        
+
+        // Apply positioning via CSS classes
+        container.addClass(`editor-to-clipboard-${horizontal}`);
+        container.addClass(`editor-to-clipboard-${vertical}`);
+
         // Add to DOM
         document.body.appendChild(container);
-        
+
         // Store reference to the container
         if (type === 'copy') {
             this.floatingCopyContainer = container;
         } else {
             this.floatingSaveContainer = container;
         }
-        
+
         // Add the button to this container
         this.addButtonToContainer(type, container);
-        
-        // Register event for workspace resize to update button positions
-        this.registerEvent(
-            this.app.workspace.on('resize', () => {
-                this.updateFloatingButtonPosition(container, type, position);
-            })
-        );
-        
-        // Also update when active leaf changes
-        this.registerEvent(
-            this.app.workspace.on('active-leaf-change', () => {
-                this.updateFloatingButtonPosition(container, type, position);
-            })
-        );
-        
-        return container;
-    }
-    
-    /**
-     * Updates the position of floating buttons when workspace changes
-     */
-    updateFloatingButtonPosition(container: HTMLElement, type: 'copy' | 'save', position: string) {
-        if (!container) return;
-        
-        // Extract position parameters
-        const [_, horizontal, vertical] = position.split('-');
-        
-        // Get the main content area (excluding sidebars)
-        const mainContent = document.querySelector('.workspace-split.mod-vertical.mod-root');
-        if (!mainContent) return;
-        
-        // Get the active editor content area
-        const workspaceLeaf = document.querySelector('.workspace-leaf.mod-active .view-content');
-        if (!workspaceLeaf) return;
-        
-        const mainContentRect = mainContent.getBoundingClientRect();
-        const workspaceRect = workspaceLeaf.getBoundingClientRect();
-        
-        // Update horizontal position relative to main content area
-        if (horizontal === 'left') {
-            const leftOffset = Math.max(workspaceRect.left + 20, mainContentRect.left + 60);
-            container.style.left = leftOffset + 'px';
-            container.style.right = 'auto';
-        } else {
-            const rightOffset = Math.max(
-                document.body.clientWidth - workspaceRect.right + 20,
-                document.body.clientWidth - mainContentRect.right + 60
-            );
-            container.style.right = rightOffset + 'px';
-            container.style.left = 'auto';
-        }
-        
-        // Update vertical position
-        switch (vertical) {
-            case 'top':
-                container.style.top = (workspaceRect.top + 20) + 'px';
-                container.style.bottom = 'auto';
-                container.style.transform = 'none';
-                break;
-            case 'middle':
-                container.style.top = (workspaceRect.top + workspaceRect.height / 2) + 'px';
-                container.style.bottom = 'auto';
-                container.style.transform = 'translateY(-50%)';
-                break;
-            case 'bottom':
-                container.style.bottom = (document.body.clientHeight - workspaceRect.bottom + 20) + 'px';
-                container.style.top = 'auto';
-                container.style.transform = 'none';
-                break;
-        }
-    }
 
-    /**
-     * Creates a grouped button container when both buttons are in the same position
-     */
-    createFloatingButtonGroup(position: string) {
-        // Create the container
-        const container = document.body.createEl('div', {
-            cls: 'editor-to-clipboard-floating-container editor-to-clipboard-group-container'
-        });
-        
-        // Get the main content area (excluding sidebars)
-        const mainContent = document.querySelector('.workspace-split.mod-vertical.mod-root');
-        if (!mainContent) return container;
-        
-        const mainContentRect = mainContent.getBoundingClientRect();
-        
-        // Extract position parameters from the setting
-        const [_, horizontal, vertical] = position.split('-');
-        
-        // Apply initial positioning relative to main content
-        if (horizontal === 'left') {
-            container.style.left = (mainContentRect.left + 60) + 'px';
-            container.style.right = 'auto';
-        } else {
-            container.style.right = (document.body.clientWidth - mainContentRect.right + 60) + 'px';
-            container.style.left = 'auto';
-        }
-        
-        // Apply vertical positioning
-        switch (vertical) {
-            case 'top':
-                container.style.top = (mainContentRect.top + 80) + 'px'; // Adjusted to match single button height
-                container.style.bottom = 'auto';
-                container.style.transform = 'none';
-                break;
-            case 'middle':
-                container.style.top = (mainContentRect.top + mainContentRect.height / 2) + 'px';
-                container.style.bottom = 'auto';
-                container.style.transform = 'translateY(-50%)';
-                break;
-            case 'bottom':
-                container.style.bottom = (document.body.clientHeight - mainContentRect.bottom + 20) + 'px';
-                container.style.top = 'auto';
-                container.style.transform = 'none';
-                break;
-        }
-        
-        // Set container to use flexbox - horizontal for top positions, vertical otherwise
-        container.style.display = 'flex';
-        
-        // Arrange buttons horizontally for top positions, vertically otherwise
-        if (vertical === 'top') {
-            container.style.flexDirection = 'row';
-            container.style.gap = '15px'; // Slightly more spacing for horizontal layout
-        } else {
-            container.style.flexDirection = 'column';
-            container.style.gap = '10px'; // Original spacing for vertical layout
-        }
-        
-        // Add to DOM
-        document.body.appendChild(container);
-        
-        // Store references to both containers
-        this.floatingCopyContainer = container;
-        this.floatingSaveContainer = container;
-        this.floatingButtonsContainer = container;
-        
-        // Add both buttons to this container
-        this.addButtonToContainer('copy', container);
-        this.addButtonToContainer('save', container);
-        
         return container;
     }
 
@@ -470,18 +234,18 @@ export default class EditorToClipboardPlugin extends Plugin {
      */
     addButtonToContainer(type: 'copy' | 'save', container: HTMLElement) {
         let buttonEl: HTMLElement;
-        
+
         if (type === 'copy') {
             buttonEl = container.createEl('div', {
                 cls: 'editor-to-clipboard-button',
                 attr: { 'aria-label': 'Copy Markdown Content' }
             });
-            
-            const icon = buttonEl.createEl('span', { 
-                cls: 'clipboard-icon', 
-                text: '📋' 
+
+            const icon = buttonEl.createEl('span', {
+                cls: 'clipboard-icon',
+                text: '📋'
             });
-            
+
             buttonEl.addEventListener('click', () => {
                 this.OneClickClipboard();
                 // Visual feedback on click
@@ -490,26 +254,26 @@ export default class EditorToClipboardPlugin extends Plugin {
                     buttonEl.classList.remove('is-active');
                 }, 200);
             });
-            
+
             this.clipboardButtonEl = buttonEl;
         } else {
             buttonEl = container.createEl('div', {
                 cls: 'editor-to-clipboard-button',
                 attr: { 'aria-label': 'Save Markdown Content to File' }
             });
-            
-            const icon = buttonEl.createEl('span', { 
-                cls: 'save-icon', 
-                text: '💾' 
+
+            const icon = buttonEl.createEl('span', {
+                cls: 'save-icon',
+                text: '💾'
             });
-            
+
             buttonEl.addEventListener('click', () => {
                 this.saveToFile();
             });
-            
+
             this.saveButtonEl = buttonEl;
         }
-        
+
         return buttonEl;
     }
 
@@ -519,30 +283,60 @@ export default class EditorToClipboardPlugin extends Plugin {
     addButtonsToContainers() {
         // Add copy button
         this.addButtonForPosition('copy', this.settings.copyButtonPosition);
-        
+
         // Add save button
         this.addButtonForPosition('save', this.settings.saveButtonPosition);
     }
-    
+
     /**
      * Add a button based on its position setting
      */
     addButtonForPosition(type: 'copy' | 'save', position: string) {
         if (position === 'hidden') return;
-        
+
         if (position === 'ribbon') {
             // Add to ribbon
             const buttonEl = this.addRibbonIcon(
-                type === 'copy' ? 'clipboard' : 'save', 
-                type === 'copy' ? 'Copy Markdown Content' : 'Save Markdown Content to File', 
+                type === 'copy' ? 'clipboard' : 'save',
+                type === 'copy' ? 'Copy Markdown Content' : 'Save Markdown Content to File',
                 () => {
                     type === 'copy' ? this.OneClickClipboard() : this.saveToFile();
                 }
             );
-            
+
             buttonEl.addClass(type === 'copy' ? 'editor-to-clipboard-plugin' : 'editor-to-clipboard-save-plugin');
             buttonEl.addClass('editor-to-clipboard-ribbon-button');
-            
+
+            if (type === 'copy') {
+                this.clipboardButtonEl = buttonEl;
+            } else {
+                this.saveButtonEl = buttonEl;
+            }
+        }
+        else if (position === 'top-of-note' && this.topOfNoteButtonsContainer) {
+            // Add to top of note
+            const buttonEl = this.topOfNoteButtonsContainer.createEl('div', {
+                cls: 'editor-to-clipboard-button',
+                attr: { 'aria-label': type === 'copy' ? 'Copy Markdown Content' : 'Save Markdown Content to File' }
+            });
+
+            const icon = buttonEl.createEl('span', {
+                cls: type === 'copy' ? 'clipboard-icon' : 'save-icon',
+                text: type === 'copy' ? '📋' : '💾'
+            });
+
+            buttonEl.addEventListener('click', () => {
+                type === 'copy' ? this.OneClickClipboard() : this.saveToFile();
+
+                // Visual feedback for copy button
+                if (type === 'copy') {
+                    buttonEl.classList.add('is-active');
+                    setTimeout(() => {
+                        buttonEl.classList.remove('is-active');
+                    }, 200);
+                }
+            });
+
             if (type === 'copy') {
                 this.clipboardButtonEl = buttonEl;
             } else {
@@ -615,13 +409,13 @@ export default class EditorToClipboardPlugin extends Plugin {
 
         // If default save location is set, use it
         let targetPath = this.settings.defaultSaveLocation;
-        
+
         // If no default path or it's empty, prompt the user
         if (!targetPath) {
             const input = document.createElement('input');
             input.type = 'text';
             input.value = suggestedName;
-            
+
             // Create a promise to handle the modal response
             const savePathPromise = new Promise<string>((resolve) => {
                 const modal = new SaveFileModal(this.app, input, (result) => {
@@ -629,24 +423,24 @@ export default class EditorToClipboardPlugin extends Plugin {
                 });
                 modal.open();
             });
-            
+
             targetPath = await savePathPromise;
-            
+
             // If user cancelled, abort
             if (!targetPath) {
                 return;
             }
-            
+
             // Ensure .md extension
             if (!targetPath.endsWith('.md')) {
                 targetPath += '.md';
             }
         }
-        
+
         try {
             // Check if the file already exists
             const existingFile = this.app.vault.getAbstractFileByPath(targetPath);
-            
+
             if (existingFile instanceof TFile) {
                 // File exists, ask for confirmation
                 const confirmPromise = new Promise<boolean>((resolve) => {
@@ -659,22 +453,22 @@ export default class EditorToClipboardPlugin extends Plugin {
                     );
                     modal.open();
                 });
-                
+
                 const shouldOverwrite = await confirmPromise;
                 if (!shouldOverwrite) {
                     // User declined to overwrite, abort
                     return;
                 }
             }
-            
+
             // Create or overwrite the file
             await this.app.vault.create(targetPath, content);
             new Notice(`Content saved to ${targetPath}`);
-            
+
             // Open the saved file if the setting is enabled
             if (this.settings.openNewFile) {
-                const savedFile = this.app.vault.getAbstractFileByPath(targetPath);
-                if (savedFile && savedFile instanceof TFile) {
+                const savedFile = this.getFileByPath(targetPath);
+                if (savedFile) {
                     // Open the file in a new leaf (tab)
                     await this.app.workspace.getLeaf('tab').openFile(savedFile);
                 }
@@ -685,51 +479,60 @@ export default class EditorToClipboardPlugin extends Plugin {
         }
     }
 
-    // Helper method to get file by path more efficiently
-    private getFileByPath(path: string): TFile | null {
-        return this.app.vault.getAbstractFileByPath(path) as TFile || null;
-    }
-
     async resolveBlockReferences(content: string): Promise<string> {
+        // Pattern to match ![[file]], ![[file#heading]], or ![[file#^blockId]]
         const embedPattern = /\!\[\[(.*?)(?:#([^\]]+))?\]\]/g;
         let matches = Array.from(content.matchAll(embedPattern));
-        
+
+        // Process in reverse order to avoid position shifts
         for (let i = matches.length - 1; i >= 0; i--) {
             const match = matches[i];
-            if (!match || !match.index) continue;
-            
             const fullMatch = match[0];
             const filePath = match[1].trim();
             const hashPart = match[2] ? match[2].trim() : "";
-            
-            // Use more efficient file lookup
-            const targetFile = this.getFileByPath(filePath);
+
+            console.log(`Processing embed: file="${filePath}", hash="${hashPart}"`);
+
+            // Get the target file
+            const targetFile = this.app.metadataCache.getFirstLinkpathDest(filePath, "");
             if (!targetFile) {
-                content = content.slice(0, match.index) + 
-                    `[File not found: ${filePath}]` + 
-                    content.slice(match.index + fullMatch.length);
+                console.log(`File not found: "${filePath}"`);
+                content = content.slice(0, match.index) +
+                          `[File not found: ${filePath}]` +
+                          content.slice(match.index + fullMatch.length);
                 continue;
             }
-            
+
+            // Get file content
             const fileContent = await this.app.vault.read(targetFile);
             const fileCache = this.app.metadataCache.getFileCache(targetFile);
-            
+
             let replacement: string | null = null;
-            
+
+            // Determine if it's a block reference
             if (hashPart.startsWith("^")) {
+                // It's a block reference
                 const blockId = hashPart.slice(1);
-                
+                console.log(`Found block reference: ^${blockId} in file ${targetFile.path}`);
+
+                // Try to find the block in the cache
                 if (fileCache && fileCache.blocks && fileCache.blocks[blockId]) {
+                    console.log(`Block found in cache: ${blockId}`);
                     const blockPosition = fileCache.blocks[blockId].position;
                     const fileLines = fileContent.split('\n');
                     replacement = fileLines[blockPosition.start.line];
+                    // Clean the block content to remove the ID
                     replacement = this.cleanBlockContent(replacement, blockId);
                 } else {
+                    // Fallback to regex if cache doesn't have block info
+                    console.log(`Block not in cache, using regex: ^${blockId}`);
                     const blockPattern = new RegExp(`(.*?)\\s*\\^${blockId}(?:\\s|$)`, "m");
                     const blockMatch = blockPattern.exec(fileContent);
                     replacement = blockMatch ? blockMatch[1].trim() : null;
-                    
+
                     if (!replacement) {
+                        // Try more aggressive pattern match
+                        console.log(`Trying aggressive pattern match for block: ^${blockId}`);
                         const lines = fileContent.split('\n');
                         for (const line of lines) {
                             if (line.includes(`^${blockId}`)) {
@@ -739,17 +542,26 @@ export default class EditorToClipboardPlugin extends Plugin {
                         }
                     }
                 }
+
+                console.log(`Block reference ${blockId} resolved to: ${replacement}`);
             } else if (hashPart) {
+                // It's a heading reference
+                const headingText = hashPart;
+                console.log(`Found heading reference: ${headingText} in file ${targetFile.path}`);
+
                 if (fileCache && fileCache.headings) {
-                    const heading = fileCache.headings.find(h => 
-                        h.heading.toLowerCase() === hashPart.toLowerCase());
-                    
+                    // Find the heading in the cache
+                    const heading = fileCache.headings.find(h =>
+                        h.heading.toLowerCase() === headingText.toLowerCase());
+
                     if (heading) {
                         const headingLevel = heading.level;
                         const headingLine = heading.position.start.line;
+
+                        // Find the next heading of same or higher level
                         const fileLines = fileContent.split('\n');
                         let endLine = fileLines.length;
-                        
+
                         for (let lineNum = headingLine + 1; lineNum < fileLines.length; lineNum++) {
                             const line = fileLines[lineNum];
                             const headingMatch = line.match(/^(#{1,6})\s/);
@@ -758,36 +570,44 @@ export default class EditorToClipboardPlugin extends Plugin {
                                 break;
                             }
                         }
-                        
+
+                        // Extract content between heading and next heading (include the heading itself)
                         replacement = fileLines.slice(headingLine, endLine).join('\n').trim();
                     }
                 }
-                
+
+                // Fallback to regex if cache doesn't work
                 if (!replacement) {
-                    replacement = await this.getHeadingContent(filePath, hashPart);
+                    replacement = await this.getHeadingContent(filePath, headingText);
                 }
+
+                console.log(`Heading reference ${headingText} resolved to: ${replacement?.substring(0, 50)}...`);
             } else {
+                // It's a full file embed
                 replacement = fileContent;
+                console.log(`Full file embed ${filePath} resolved`);
             }
-            
+
+            // Replace the embed with the content or remove it if not found
             if (replacement) {
+                // Check if the embed is on its own line
                 const beforeEmbed = match.index > 0 ? content[match.index - 1] : '';
-                const afterEmbed = match.index + fullMatch.length < content.length ? 
-                    content[match.index + fullMatch.length] : '';
-                
+                const afterEmbed = match.index + fullMatch.length < content.length ? content[match.index + fullMatch.length] : '';
+
+                // Preserve newlines before and after if they exist
                 const preserveLeadingNewline = beforeEmbed === '\n' ? '\n' : '';
                 const preserveTrailingNewline = afterEmbed === '\n' ? '\n' : '';
-                
-                content = content.slice(0, match.index) + 
-                    preserveLeadingNewline + replacement + preserveTrailingNewline + 
-                    content.slice(match.index + fullMatch.length);
+
+                content = content.slice(0, match.index) +
+                          preserveLeadingNewline + replacement + preserveTrailingNewline +
+                          content.slice(match.index + fullMatch.length);
             } else {
-                content = content.slice(0, match.index) + 
-                    `[Content not found: ${filePath}${hashPart ? '#' + hashPart : ''}]` + 
-                    content.slice(match.index + fullMatch.length);
+                content = content.slice(0, match.index) +
+                          `[Content not found: ${filePath}${hashPart ? '#' + hashPart : ''}]` +
+                          content.slice(match.index + fullMatch.length);
             }
         }
-        
+
         return content;
     }
 
@@ -799,15 +619,15 @@ export default class EditorToClipboardPlugin extends Plugin {
      */
     cleanBlockContent(content: string, blockId?: string): string {
         if (!content) return "";
-        
+
         // First try to remove the specific block ID if provided
         if (blockId) {
             content = content.replace(new RegExp(`\\^${blockId}\\s*$`), '');
         }
-        
+
         // Also remove any other block IDs that might be present
         content = content.replace(/\s*\^[a-zA-Z0-9]+\s*$/g, '');
-        
+
         return content.trim();
     }
 
@@ -821,7 +641,7 @@ export default class EditorToClipboardPlugin extends Plugin {
             // Apply block ID cleaning to each line
             lines[i] = this.cleanBlockContent(lines[i]);
         }
-        
+
         return lines.join('\n');
     }
 
@@ -842,9 +662,9 @@ export default class EditorToClipboardPlugin extends Plugin {
         // Match any line that contains the block ID
         const blockPattern = new RegExp(`.*\\^${blockId}.*$`, "m");
         const match = blockPattern.exec(fileContent);
-        
+
         if (!match) return null;
-        
+
         // Return the line content without the block ID using our cleaning function
         return this.cleanBlockContent(match[0], blockId);
     }
@@ -862,7 +682,7 @@ export default class EditorToClipboardPlugin extends Plugin {
         const headingLevelPattern = new RegExp(`^(#{1,6})\\s+${safeHeading}`, "m");
         const levelMatch = headingLevelPattern.exec(fileContent);
         if (!levelMatch) return null;
-        
+
         const headingLevel = levelMatch[1].length;
 
         // Match the heading line and capture until the next heading of same/higher level or EOF
@@ -870,7 +690,7 @@ export default class EditorToClipboardPlugin extends Plugin {
             `^#{${headingLevel}}\\s+${safeHeading}.*?$(\\n[\\s\\S]*?)(?=^#{1,${headingLevel}}\\s|$)`,
             "m"
         );
-        
+
         const match = headingPattern.exec(fileContent);
         return match ? match[1].trim() : null;
     }
@@ -886,47 +706,13 @@ export default class EditorToClipboardPlugin extends Plugin {
     onunload() {
         // Clean up all button elements when plugin is disabled
         document.querySelectorAll('.editor-to-clipboard-floating-container').forEach(el => el.remove());
-        
+        document.querySelectorAll('.editor-to-clipboard-top-note-container').forEach(el => el.remove());
+
         // Unregister event if exists
         if (this.leafChangeEvent) {
             this.app.workspace.offref(this.leafChangeEvent);
             this.leafChangeEvent = null;
         }
-    }
-
-    /**
-     * Updates positions of all floating buttons with debouncing
-     */
-    updateAllFloatingButtonPositions() {
-        // Don't update if settings tab is open
-        const activeLeaf = this.app.workspace.activeLeaf;
-        if (activeLeaf?.view instanceof SettingTab) {
-            return;
-        }
-
-        // Clear any existing timeout
-        if (this.positionUpdateTimeout) {
-            clearTimeout(this.positionUpdateTimeout);
-        }
-
-        // Debounce position updates to prevent flickering
-        this.positionUpdateTimeout = setTimeout(() => {
-            if (this.floatingCopyContainer) {
-                this.updateFloatingButtonPosition(
-                    this.floatingCopyContainer,
-                    'copy',
-                    this.settings.copyButtonPosition
-                );
-            }
-            if (this.floatingSaveContainer && this.floatingSaveContainer !== this.floatingCopyContainer) {
-                this.updateFloatingButtonPosition(
-                    this.floatingSaveContainer,
-                    'save',
-                    this.settings.saveButtonPosition
-                );
-            }
-            this.positionUpdateTimeout = null;
-        }, 50); // Small delay to batch position updates
     }
 }
 
@@ -944,37 +730,38 @@ class SaveFileModal extends Modal {
 
     onOpen() {
         const { contentEl } = this;
-        
+
         contentEl.createEl('h2', { text: 'Save to file' });
-        
-        contentEl.createEl('p', { 
+
+        contentEl.createEl('p', {
             text: 'Enter the file path where you want to save the content:'
         });
-        
-        // Add the input element
+
+        // Add the input element with class instead of inline style
+        this.inputEl.addClass('editor-to-clipboard-modal-input');
         contentEl.appendChild(this.inputEl);
-        this.inputEl.style.width = '100%';
         this.inputEl.focus();
-        
-        // Add action buttons
-        const buttonContainer = contentEl.createEl('div');
-        buttonContainer.style.marginTop = '1rem';
-        buttonContainer.style.display = 'flex';
-        buttonContainer.style.justifyContent = 'flex-end';
-        
+
+        // Add action buttons with classes instead of inline styles
+        const buttonContainer = contentEl.createEl('div', {
+            cls: 'editor-to-clipboard-modal-button-container'
+        });
+
         const saveButton = buttonContainer.createEl('button', { text: 'Save' });
         saveButton.addEventListener('click', () => {
             this.close();
             this.onSubmit(this.inputEl.value);
         });
-        
-        const cancelButton = buttonContainer.createEl('button', { text: 'Cancel' });
-        cancelButton.style.marginRight = '0.5rem';
+
+        const cancelButton = buttonContainer.createEl('button', {
+            text: 'Cancel',
+            cls: 'editor-to-clipboard-modal-cancel-button'
+        });
         cancelButton.addEventListener('click', () => {
             this.close();
             this.onSubmit('');
         });
-        
+
         // Handle Enter key
         this.inputEl.addEventListener('keydown', (event) => {
             if (event.key === 'Enter') {
@@ -1004,27 +791,28 @@ class ConfirmationModal extends Modal {
 
     onOpen() {
         const { contentEl } = this;
-        
+
         contentEl.createEl('h2', { text: 'Confirmation' });
-        
-        contentEl.createEl('p', { 
+
+        contentEl.createEl('p', {
             text: this.message
         });
-        
+
         // Add action buttons
-        const buttonContainer = contentEl.createEl('div');
-        buttonContainer.style.marginTop = '1rem';
-        buttonContainer.style.display = 'flex';
-        buttonContainer.style.justifyContent = 'flex-end';
-        
+        const buttonContainer = contentEl.createEl('div', {
+            cls: 'editor-to-clipboard-modal-button-container'
+        });
+
         const confirmButton = buttonContainer.createEl('button', { text: 'Overwrite' });
         confirmButton.addEventListener('click', () => {
             this.close();
             this.onConfirm(true);
         });
-        
-        const cancelButton = buttonContainer.createEl('button', { text: 'Cancel' });
-        cancelButton.style.marginRight = '0.5rem';
+
+        const cancelButton = buttonContainer.createEl('button', {
+            text: 'Cancel',
+            cls: 'editor-to-clipboard-modal-cancel-button'
+        });
         cancelButton.addEventListener('click', () => {
             this.close();
             this.onConfirm(false);
@@ -1049,14 +837,14 @@ class EditorToClipboardSettingTab extends PluginSettingTab {
         const { containerEl } = this;
         containerEl.empty();
 
-        containerEl.createEl('h2', { text: 'Editor to Clipboard Plugin Settings' });
+        containerEl.createEl('h2', { text: 'Settings for Editor to Clipboard Plugin' });
 
         // Content settings
         containerEl.createEl('h3', { text: 'Content Settings' });
 
         new Setting(containerEl)
             .setName('Remove Metadata')
-            .setDesc('Remove metadata (front matter) from the copied content.')
+            .setDesc('Remove metadata information (marked by three dashes at the top of the file) when copying markdown content. This includes any front matter such as dates, tags, etc.')
             .addToggle(toggle => toggle
                 .setValue(this.plugin.settings.removeMetadata)
                 .onChange(async (value) => {
@@ -1066,7 +854,7 @@ class EditorToClipboardSettingTab extends PluginSettingTab {
 
         new Setting(containerEl)
             .setName('Remove Block IDs')
-            .setDesc('Remove block reference IDs from the copied content.')
+            .setDesc('Remove block reference IDs (^blockId) from the exported content.')
             .addToggle(toggle => toggle
                 .setValue(this.plugin.settings.removeBlockIds)
                 .onChange(async (value) => {
@@ -1074,14 +862,15 @@ class EditorToClipboardSettingTab extends PluginSettingTab {
                     await this.plugin.saveSettings();
                 }));
 
-        // Button settings
-        containerEl.createEl('h3', { text: 'Button Settings' });
+        // Copy button settings
+        containerEl.createEl('h3', { text: 'Copy Button Settings' });
 
         new Setting(containerEl)
             .setName('Copy Button Position')
             .setDesc('Choose where to display the copy button.')
             .addDropdown(dropdown => dropdown
                 .addOption('ribbon', 'Left Sidebar')
+                .addOption('top-of-note', 'Top of Note')
                 .addOption('hidden', 'Hidden')
                 .addOption('floating-left-top', 'Floating (Left Top)')
                 .addOption('floating-left-middle', 'Floating (Left Middle)')
@@ -1096,11 +885,15 @@ class EditorToClipboardSettingTab extends PluginSettingTab {
                     this.plugin.updateButtonLocations();
                 }));
 
+        // Save button settings
+        containerEl.createEl('h3', { text: 'Save Button Settings' });
+
         new Setting(containerEl)
             .setName('Save Button Position')
             .setDesc('Choose where to display the save button.')
             .addDropdown(dropdown => dropdown
                 .addOption('ribbon', 'Left Sidebar')
+                .addOption('top-of-note', 'Top of Note')
                 .addOption('hidden', 'Hidden')
                 .addOption('floating-left-top', 'Floating (Left Top)')
                 .addOption('floating-left-middle', 'Floating (Left Middle)')
@@ -1115,12 +908,9 @@ class EditorToClipboardSettingTab extends PluginSettingTab {
                     this.plugin.updateButtonLocations();
                 }));
 
-        // File settings
-        containerEl.createEl('h3', { text: 'File Settings' });
-
         new Setting(containerEl)
             .setName('File Name Prefix')
-            .setDesc('Prefix to add to exported file names.')
+            .setDesc('Prefix to add to exported file names (e.g., "(Plain) ")')
             .addText(text => text
                 .setPlaceholder('(Plain) ')
                 .setValue(this.plugin.settings.fileNamePrefix)
@@ -1131,7 +921,7 @@ class EditorToClipboardSettingTab extends PluginSettingTab {
 
         new Setting(containerEl)
             .setName('Default Save Location')
-            .setDesc('Set a default save location for files. Leave empty to be prompted each time.')
+            .setDesc('Optional: Set a default save location for files. Leave empty to be prompted each time. Example: "exports/"')
             .addText(text => text
                 .setPlaceholder('exports/')
                 .setValue(this.plugin.settings.defaultSaveLocation)
@@ -1151,3 +941,4 @@ class EditorToClipboardSettingTab extends PluginSettingTab {
                 }));
     }
 }
+
