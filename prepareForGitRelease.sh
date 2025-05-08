@@ -1,4 +1,4 @@
-# minor version bump 
+# minor version bump
 npm version patch
 
 # create the current_release directory if it does not exist
@@ -21,5 +21,5 @@ mv editor-to-clipboard.zip release.zip
 git add -A
 git commit -m "Prepare for Git Release"
 # git push origin main
-echo "git push origin Version"
-echo 'TODO gh release create 1.0.Version release.zip main.js manifest.json styles.css --title "TITLE" --notes "NOTE"'
+echo "make sure to push tag: git push origin TAGNUMBER"
+echo 'gh release create TAGNUMBER release.zip main.js manifest.json styles.css --title "TITLE" --notes "NOTES"'

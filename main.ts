@@ -503,9 +503,9 @@ export default class EditorToClipboardPlugin extends Plugin {
             const targetFile = this.app.metadataCache.getFirstLinkpathDest(filePath, "");
             if (!targetFile) {
                 console.log(`File not found: "${filePath}"`);
-                content = content.slice(0, match.index) +
+                content = content.slice(0, match.index !== undefined ? match.index : 0) +
                           `[File not found: ${filePath}]` +
-                          content.slice(match.index + fullMatch.length);
+                          content.slice(match.index !== undefined ? match.index + fullMatch.length : 0);
                 continue;
             }
 
@@ -597,20 +597,21 @@ export default class EditorToClipboardPlugin extends Plugin {
             // Replace the embed with the content or remove it if not found
             if (replacement) {
                 // Check if the embed is on its own line
-                const beforeEmbed = match.index > 0 ? content[match.index - 1] : '';
-                const afterEmbed = match.index + fullMatch.length < content.length ? content[match.index + fullMatch.length] : '';
+                const beforeEmbed = (match.index !== undefined && match.index > 0) ? content[match.index - 1] : '';
+                const afterEmbed = (match.index !== undefined && match.index + fullMatch.length < content.length) ?
+                    content[match.index + fullMatch.length] : '';
 
                 // Preserve newlines before and after if they exist
                 const preserveLeadingNewline = beforeEmbed === '\n' ? '\n' : '';
                 const preserveTrailingNewline = afterEmbed === '\n' ? '\n' : '';
 
-                content = content.slice(0, match.index) +
+                content = content.slice(0, match.index !== undefined ? match.index : 0) +
                           preserveLeadingNewline + replacement + preserveTrailingNewline +
-                          content.slice(match.index + fullMatch.length);
+                          content.slice(match.index !== undefined ? match.index + fullMatch.length : 0);
             } else {
-                content = content.slice(0, match.index) +
+                content = content.slice(0, match.index !== undefined ? match.index : 0) +
                           `[Content not found: ${filePath}${hashPart ? '#' + hashPart : ''}]` +
-                          content.slice(match.index + fullMatch.length);
+                          content.slice(match.index !== undefined ? match.index + fullMatch.length : 0);
             }
         }
 
@@ -705,7 +706,8 @@ export default class EditorToClipboardPlugin extends Plugin {
                     if (!nextLineMatch && nextLine.trim()) {
                         // Next line is not a list item but has content - mark it as a continuation
                         // Check if there's any indentation
-                        const nextLineIndent = nextLine.match(/^([\s]*)/)[1].length;
+                        const indentMatch = nextLine.match(/^([\s]*)/);
+                        const nextLineIndent = indentMatch && indentMatch[1] !== undefined ? indentMatch[1].length : 0;
 
                         // If it's not already properly indented, record that we need to preserve its indentation
                         if (nextLineIndent <= indentLevel) {
